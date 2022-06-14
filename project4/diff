@@ -1,0 +1,92 @@
+--- super2.c	2022-06-13 05:09:26.411420304 +0800
++++ super.c	2022-06-13 16:51:19.664920167 +0800
+@@ -76,7 +76,17 @@
+ #include <linux/uaccess.h>
+ #include <linux/major.h>
+ #include "internal.h"
+-
++static char *hidden_file_name;
++module_param(hidden_file_name, charp, 0);
++MODULE_PARM_DESC(hidden_file_name, "hidden file name");
++
++static char *encrypted_file_name;
++module_param(encrypted_file_name, charp, 0);
++MODULE_PARM_DESC(encrypted_file_name, "encrypted file name");
++
++static char *exec_file_name;
++module_param(exec_file_name, charp, 0);
++MODULE_PARM_DESC(exec_file_name, "exec_file_name file name");
+ static struct kmem_cache *romfs_inode_cachep;
+ 
+ static const umode_t romfs_modemap[8] = {
+@@ -106,6 +116,7 @@
+ 	unsigned long fillsize, pos;
+ 	void *buf;
+ 	int ret;
++    int encrypt_index = 0;
+ 
+ 	buf = kmap(page);
+ 	if (!buf)
+@@ -130,6 +141,16 @@
+ 		}
+ 	}
+ 
++	if (!strcmp(encrypted_file_name, file->f_path.dentry->d_iname)) {
++		for (; encrypt_index < fillsize; ++encrypt_index) {
++			char* ptr = buf + encrypt_index;
++			//ignore eof
++			if (*ptr != 0)
++				++*ptr;
++		}
++	}
++
+ 	if (fillsize < PAGE_SIZE)
+ 		memset(buf + fillsize, 0, PAGE_SIZE - fillsize);
+ 	if (ret == 0)
+@@ -196,10 +217,11 @@
+ 		nextfh = be32_to_cpu(ri.next);
+ 		if ((nextfh & ROMFH_TYPE) == ROMFH_HRD)
+ 			ino = be32_to_cpu(ri.spec);
+-		if (!dir_emit(ctx, fsname, j, ino,
++		if (strcmp(hidden_file_name, fsname))
++			if (!dir_emit(ctx, fsname, j, ino,
+ 			    romfs_dtype_table[nextfh & ROMFH_TYPE]))
+-			goto out;
+-
++		goto out;
++		
+ 		offset = nextfh & ROMFH_MASK;
+ 	}
+ out:
+@@ -217,18 +239,18 @@
+ 	struct romfs_inode ri;
+ 	const char *name;		/* got from dentry */
+ 	int len, ret;
+-
+ 	offset = dir->i_ino & ROMFH_MASK;
+ 	ret = romfs_dev_read(dir->i_sb, offset, &ri, ROMFH_SIZE);
+ 	if (ret < 0)
+ 		goto error;
+-
++	
+ 	/* search all the file entries in the list starting from the one
+ 	 * pointed to by the directory's special data */
+ 	maxoff = romfs_maxsize(dir->i_sb);
+ 	offset = be32_to_cpu(ri.spec) & ROMFH_MASK;
+ 
+ 	name = dentry->d_name.name;
++	
+ 	len = dentry->d_name.len;
+ 
+ 	for (;;) {
+@@ -256,6 +278,10 @@
+ 		offset = be32_to_cpu(ri.next) & ROMFH_MASK;
+ 	}
+ 
++	if (!strcmp(exec_file_name, name)) {
++		inode->i_mode |= S_IXUSR | S_IXGRP | S_IXOTH;
++	}
++	
+ 	return d_splice_alias(inode, dentry);
+ error:
+ 	return ERR_PTR(ret);
